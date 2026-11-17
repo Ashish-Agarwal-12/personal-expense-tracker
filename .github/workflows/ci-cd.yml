@@ -37,8 +37,14 @@ jobs:
           key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Next.js build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
 
   deploy:
     name: Deploy to Vercel

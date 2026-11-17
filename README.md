@@ -2,7 +2,7 @@
 
 A personal app to stop overspending and get out of debt. It tracks daily expenses, puts every EMI in one place, and **warns you before you spend money you don't have**.
 
-Your data is stored in **MongoDB Atlas**, the website runs on **Vercel**, and it is protected by a password, so you can open it from your phone or any computer.
+Built with **Next.js 16 (App Router) + TypeScript + React 19**. Your data is stored in **MongoDB Atlas**, the app runs on **Vercel**, and it is protected by a password, so you can open it from your phone or any computer.
 
 ```
  git push ──► GitHub Actions ──► tests pass? ──► Vercel deploy ──► https://your-app.vercel.app
@@ -25,7 +25,7 @@ Your data is stored in **MongoDB Atlas**, the website runs on **Vercel**, and it
 ### 2. Vercel — the website
 
 1. Sign up / log in at <https://vercel.com> with **GitHub** (the same Vercel account you use for v0).
-2. **Add New… → Project** → import `personal-expense-tracker`. Framework preset: **Other** (the rest comes from `vercel.json`).
+2. **Add New… → Project** → import `personal-expense-tracker`. Framework preset: **Next.js** (also set in `vercel.json`).
 3. Open **Environment Variables** and add:
 
    | Name | Value | Environments |
@@ -79,7 +79,9 @@ npm run dev
 Open <http://localhost:5173>. Settings come from `.env` (copy `.env.example`). Without `MONGODB_URI` it uses a **temporary in-memory database**; without `APP_PASSWORD` the password is `dev-password`.
 
 ```bash
-npm test         # API tests (uses a throwaway MongoDB)
+npm test            # Vitest: API routes (throwaway MongoDB), budget maths, setup checks
+npm run typecheck   # TypeScript
+npm run build       # production build
 ```
 
 ---
@@ -109,18 +111,29 @@ Safe to spend today    = (What's left this month) ÷ (Days left in month)
 - Changing `APP_PASSWORD` in Vercel (then redeploying) logs out every device.
 - 10 wrong passwords from one IP blocks login for 15 minutes (tracked in MongoDB, so it holds across all serverless instances).
 - All input is validated on the server before it reaches MongoDB.
+- Strict Content Security Policy with a fresh nonce per request (`proxy.ts`), so only scripts Next.js rendered can run.
+- If the server is misconfigured, the site says exactly which setting is wrong — without ever showing secret values.
 
 ## Project structure
 
 ```
-public/                 the website (HTML, CSS, JS) — served by Vercel as static files
-api/index.js            Vercel Function: handles every /api/* request
-server/app.js           API routes
-server/auth.js          password login, session cookie, login rate limit
-server/db.js            shared MongoDB connection
-server/validate.js      input validation
-server/index.js         local development server (npm run dev)
-test/                   API + Vercel function tests
-.github/workflows/      CI/CD pipeline
-vercel.json             Vercel routing, headers, deploy settings
+app/
+  page.tsx, layout.tsx      the page (hosts the React app)
+  globals.css               styles (auto light / dark mode)
+  api/**/route.ts           API routes: login, data, expenses, EMIs, categories, settings, import
+components/
+  TrackerApp.tsx            login / setup-problem / app shell, tabs
+  views.tsx                 Dashboard, Expenses, EMIs, Budget & Settings screens
+  forms.tsx                 expense, EMI and category forms
+  tracker-context.tsx       your data + actions (instant updates, saved to the server)
+  ui.tsx                    pop-ups, toasts, small shared pieces
+lib/
+  budget.ts                 all budget maths and warnings (pure, unit-tested)
+  format.ts, types.ts       formatting helpers and shared data types
+  client/api.ts             browser → API calls
+  server/                   MongoDB connection, data access, validation, login, setup checks
+proxy.ts                    per-request Content Security Policy
+test/                       Vitest tests
+.github/workflows/          CI/CD pipeline
+vercel.json                 Vercel settings (deploys come from GitHub Actions)
 ```
