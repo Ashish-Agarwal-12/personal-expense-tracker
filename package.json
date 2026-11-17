@@ -1,0 +1,9 @@
+{
+  "name": "personal-expense-tracker",
+  "version": "1.0.0",
+  "description": "Track daily expenses and EMIs, with spending limits and warnings to get out of debt.",
+  "private": true,
+  "scripts": {
+    "start": "node serve.js"
+  }
+}

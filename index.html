@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Debt-Free Tracker</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">₹</span>
+      <div>
+        <h1>Debt-Free Tracker</h1>
+        <p class="sub" id="monthLabel"></p>
+      </div>
+    </div>
+    <button class="btn primary" id="quickAddBtn">+ Add expense</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="dashboard">Dashboard</button>
+    <button class="tab" data-view="expenses">Expenses</button>
+    <button class="tab" data-view="emis">EMIs &amp; Loans</button>
+    <button class="tab" data-view="settings">Budget &amp; Settings</button>
+  </nav>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <div id="alerts"></div>
+
+      <div class="hero card" id="hero"></div>
+
+      <div class="grid stats" id="stats"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head">
+            <h2>Upcoming EMIs</h2>
+            <button class="link" data-goto="emis">See all</button>
+          </div>
+          <div id="upcomingEmis"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2>Spending by category</h2>
+            <span class="muted small">this month</span>
+          </div>
+          <div id="categoryBars"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Recent expenses</h2>
+          <button class="link" data-goto="expenses">See all</button>
+        </div>
+        <div id="recentExpenses"></div>
+      </div>
+    </section>
+
+    <!-- EXPENSES -->
+    <section id="view-expenses" class="view">
+      <div class="card">
+        <h2>Add an expense</h2>
+        <form id="expenseForm" class="form-grid" autocomplete="off">
+          <label>Amount (₹)
+            <input type="number" name="amount" min="1" step="any" required inputmode="decimal" placeholder="e.g. 250" />
+          </label>
+          <label>Category
+            <select name="categoryId" required></select>
+          </label>
+          <label>Paid with
+            <select name="method">
+              <option value="upi">UPI</option>
+              <option value="cash">Cash</option>
+              <option value="debit">Debit card</option>
+              <option value="credit">Credit card</option>
+            </select>
+          </label>
+          <label>Date
+            <input type="date" name="date" required />
+          </label>
+          <label class="wide">Note
+            <input type="text" name="note" maxlength="80" placeholder="What was it for?" />
+          </label>
+          <div class="wide row-end">
+            <span class="muted small" id="expenseHint"></span>
+            <button class="btn primary" type="submit">Add expense</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>All expenses</h2>
+          <div class="filters">
+            <input type="month" id="expenseMonth" />
+            <select id="expenseCatFilter"><option value="">All categories</option></select>
+          </div>
+        </div>
+        <div id="expenseSummary" class="muted small"></div>
+        <div id="expenseList"></div>
+      </div>
+    </section>
+
+    <!-- EMIS -->
+    <section id="view-emis" class="view">
+      <div class="grid stats" id="emiStats"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Your EMIs</h2>
+          <button class="btn" id="addEmiBtn">+ Add EMI</button>
+        </div>
+        <div id="emiList"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h2>Monthly budget</h2>
+        <p class="muted small">Your spending limit is calculated as: <b>Salary − EMIs − Fixed bills − Savings</b>. Whatever is left is all you are allowed to spend this month.</p>
+        <form id="settingsForm" class="form-grid">
+          <label>Monthly take-home salary (₹)
+            <input type="number" name="income" min="0" step="any" required />
+          </label>
+          <label>Fixed bills — rent, electricity, phone, etc. (₹)
+            <input type="number" name="fixedBills" min="0" step="any" />
+          </label>
+          <label>Save / emergency fund each month (₹)
+            <input type="number" name="savingsGoal" min="0" step="any" />
+          </label>
+          <label>Max credit card spend per month (₹)
+            <input type="number" name="ccLimit" min="0" step="any" placeholder="0 = block credit card" />
+          </label>
+          <div class="wide row-end">
+            <span class="muted small" id="budgetPreview"></span>
+            <button class="btn primary" type="submit">Save budget</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Category limits</h2>
+          <button class="btn" id="addCatBtn">+ Add category</button>
+        </div>
+        <p class="muted small">Optional monthly cap per category. Leave 0 for no cap. You'll be warned at 80% and when you cross it.</p>
+        <div id="catList"></div>
+      </div>
+
+      <div class="card">
+        <h2>Backup</h2>
+        <p class="muted small">All data is saved only in this browser on this device. Download a backup regularly.</p>
+        <div class="row">
+          <button class="btn" id="exportBtn">Download backup</button>
+          <label class="btn file-btn">Restore backup
+            <input type="file" id="importInput" accept="application/json" hidden />
+          </label>
+          <button class="btn danger" id="resetBtn">Erase all data</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
