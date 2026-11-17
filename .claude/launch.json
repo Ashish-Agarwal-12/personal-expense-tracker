@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "tracker-throwaway-db",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "env": { "MONGODB_URI": "", "APP_PASSWORD": "", "NEXT_TELEMETRY_DISABLED": "1" },
+      "port": 5173
     }
   ]
 }
