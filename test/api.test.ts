@@ -14,7 +14,8 @@ import * as logout from '@/app/api/logout/route';
 import * as session from '@/app/api/session/route';
 import * as settings from '@/app/api/settings/route';
 import { getContext, resetContextForTests } from '@/lib/server/db';
-import { ensureInitialized } from '@/lib/server/store';
+import { ensureInitialized, upgradeCategories } from '@/lib/server/store';
+import { DEFAULT_CATEGORIES, OLD_EATING_NAME } from '@/lib/types';
 import { call } from './helpers';
 
 const PASSWORD = 'correct-horse-battery';
@@ -99,7 +100,8 @@ describe('data', () => {
   test('fresh database has default categories and zero settings', async () => {
     const cookie = await signIn();
     const { body } = await call(data.GET, { cookie });
-    expect(body.categories).toHaveLength(8);
+    expect(body.categories).toHaveLength(12);
+    expect(body.categories.map((c: { id: string }) => c.id)).toEqual(DEFAULT_CATEGORIES.map((c) => c.id));
     expect(body.settings.income).toBe(0);
     expect(body.expenses).toEqual([]);
   });
@@ -188,6 +190,55 @@ describe('data', () => {
     d = (await call(data.GET, { cookie })).body;
     expect(d.expenses).toHaveLength(0);
     expect(d.emis).toHaveLength(0);
-    expect(d.categories).toHaveLength(8);
+    expect(d.categories).toHaveLength(12);
+  });
+});
+
+describe('category upgrade for existing databases', () => {
+  /** A database exactly as the previous version of the app left it: the 8 old categories, no upgrade record. */
+  async function oldDatabase(eatingName = OLD_EATING_NAME) {
+    const { db } = await getContext();
+    await db.dropDatabase();
+    await db.collection('settings').insertOne({ _id: 'settings' as never, income: 60000, fixedBills: 0, savingsGoal: 0, ccLimit: 0 });
+    const old = ['food', 'eating', 'transport', 'shopping', 'entertainment', 'health', 'family', 'other'];
+    await db.collection('categories').insertMany(
+      old.map((id) => ({ _id: id as never, name: id === 'eating' ? eatingName : id, icon: '📦', limit: id === 'food' ? 8000 : 0 })),
+    );
+    return db;
+  }
+
+  test('adds Blinkit, Zepto, Swiggy and Zomato and renames the old combined category', async () => {
+    const db = await oldDatabase();
+    await upgradeCategories(db);
+    const cookie = await signIn();
+    const cats = (await call(data.GET, { cookie })).body.categories as { id: string; name: string; limit: number }[];
+    expect(cats.map((c) => c.id)).toEqual(['food', 'blinkit', 'zepto', 'swiggy', 'zomato', 'eating', 'transport', 'shopping', 'entertainment', 'health', 'family', 'other']);
+    expect(cats.find((c) => c.id === 'eating')!.name).toBe('Eating out / Restaurants');
+    expect(cats.find((c) => c.id === 'food')!.limit).toBe(8000); // your existing limits are kept
+  });
+
+  test('keeps a category name you changed yourself', async () => {
+    const db = await oldDatabase('Restaurants & cafes');
+    await upgradeCategories(db);
+    const eating = await db.collection('categories').findOne({ _id: 'eating' as never });
+    expect(eating!.name).toBe('Restaurants & cafes');
+  });
+
+  test('runs once: a new category you delete does not come back', async () => {
+    const db = await oldDatabase();
+    await upgradeCategories(db);
+    const cookie = await signIn();
+    expect((await call(categoriesId.DELETE, { method: 'DELETE', params: { id: 'zepto' }, cookie })).status).toBe(204);
+    await upgradeCategories(db);
+    const cats = (await call(data.GET, { cookie })).body.categories as { id: string }[];
+    expect(cats.map((c) => c.id)).not.toContain('zepto');
+  });
+
+  test('does not overwrite a category that already has the same id', async () => {
+    const db = await oldDatabase();
+    await db.collection('categories').insertOne({ _id: 'swiggy' as never, name: 'My Swiggy', icon: '🍜', limit: 1500 });
+    await upgradeCategories(db);
+    const swiggy = await db.collection('categories').findOne({ _id: 'swiggy' as never });
+    expect(swiggy).toMatchObject({ name: 'My Swiggy', limit: 1500 });
   });
 });

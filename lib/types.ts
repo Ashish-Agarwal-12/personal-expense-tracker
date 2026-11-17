@@ -69,9 +69,21 @@ export const EMI_KIND_INFO: Record<EmiKind, { label: string; icon: string }> = {
   other: { label: 'Other', icon: '📄' },
 };
 
+/** Quick-commerce and food-delivery apps — tracked separately because small orders add up fast. */
+export const APP_CATEGORIES: Category[] = [
+  { id: 'blinkit', name: 'Blinkit', icon: '🧺', limit: 0 },
+  { id: 'zepto', name: 'Zepto', icon: '⚡', limit: 0 },
+  { id: 'swiggy', name: 'Swiggy', icon: '🛵', limit: 0 },
+  { id: 'zomato', name: 'Zomato', icon: '🍕', limit: 0 },
+];
+
+/** The old name of the `eating` category, before Swiggy and Zomato got their own. */
+export const OLD_EATING_NAME = 'Eating out / Swiggy / Zomato';
+
 export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'food', name: 'Food & Groceries', icon: '🛒', limit: 0 },
-  { id: 'eating', name: 'Eating out / Swiggy / Zomato', icon: '🍔', limit: 0 },
+  ...APP_CATEGORIES,
+  { id: 'eating', name: 'Eating out / Restaurants', icon: '🍔', limit: 0 },
   { id: 'transport', name: 'Transport & Fuel', icon: '⛽', limit: 0 },
   { id: 'shopping', name: 'Shopping', icon: '🛍️', limit: 0 },
   { id: 'entertainment', name: 'Entertainment', icon: '🎬', limit: 0 },

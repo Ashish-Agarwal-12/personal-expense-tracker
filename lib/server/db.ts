@@ -1,7 +1,7 @@
 import { MongoClient, type Db } from 'mongodb';
 import { createAuth, createLoginLimiter, type Auth, type LoginLimiter } from './auth';
 import { checkConfig, explainDbError } from './startup';
-import { ensureIndexes, ensureInitialized, loginAttempts } from './store';
+import { ensureIndexes, ensureInitialized, loginAttempts, upgradeCategories } from './store';
 
 /** Thrown when the server can't start; `problems` are safe, plain-English messages for the website. */
 export class SetupError extends Error {
@@ -52,6 +52,7 @@ async function build(): Promise<ServerContext> {
     await client.connect();
     db = client.db(process.env.MONGODB_DB || 'expense_tracker');
     await ensureInitialized(db);
+    await upgradeCategories(db);
     await ensureIndexes(db);
   } catch (err) {
     const e = err as Error;

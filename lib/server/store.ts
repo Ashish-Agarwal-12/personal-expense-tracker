@@ -1,5 +1,5 @@
 import type { Db, Document } from 'mongodb';
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, type AppData, type Category, type Emi, type Expense, type Settings } from '@/lib/types';
+import { APP_CATEGORIES, DEFAULT_CATEGORIES, DEFAULT_SETTINGS, OLD_EATING_NAME, type AppData, type Category, type Emi, type Expense, type Settings } from '@/lib/types';
 
 /** All MongoDB reads and writes. Our string `id` is stored as `_id`; callers only ever see `id`. */
 
@@ -37,6 +37,37 @@ export async function ensureInitialized(db: Db): Promise<void> {
   }
 }
 
+/**
+ * One-time upgrades for databases created by an older version of the app.
+ * Each step runs once; the version is kept in `meta`, which backups/imports and "Erase all" never touch,
+ * so a category you delete later is not added back.
+ */
+const CATEGORIES_VERSION = 2;
+const metaCol = (db: Db) => db.collection<{ _id: string; version: number }>('meta');
+
+export async function upgradeCategories(db: Db): Promise<void> {
+  const meta = await metaCol(db).findOne({ _id: 'categories' });
+  if ((meta?.version ?? 1) >= CATEGORIES_VERSION) return;
+
+  // v2: Blinkit, Zepto, Swiggy and Zomato get their own categories.
+  const cats = db.collection<WithStrId<Category>>('categories');
+  for (const c of APP_CATEGORIES) {
+    const { _id, ...fields } = toDoc(c);
+    await cats.updateOne({ _id }, { $setOnInsert: fields }, { upsert: true });
+  }
+  // Rename the old combined category, but only if you haven't renamed it yourself.
+  await cats.updateOne({ _id: 'eating', name: OLD_EATING_NAME }, { $set: { name: DEFAULT_CATEGORIES.find((c) => c.id === 'eating')!.name } });
+
+  await metaCol(db).updateOne({ _id: 'categories' }, { $set: { version: CATEGORIES_VERSION } }, { upsert: true });
+}
+
+/** Starter categories in their usual order, then your own, with "Other" last. */
+function categoryRank(id: string): number {
+  if (id === 'other') return Number.MAX_SAFE_INTEGER;
+  const i = DEFAULT_CATEGORIES.findIndex((c) => c.id === id);
+  return i >= 0 ? i : DEFAULT_CATEGORIES.length;
+}
+
 export async function ensureIndexes(db: Db): Promise<void> {
   await listCol(db, 'expenses').createIndex({ date: -1 });
   // Failed-login counters delete themselves when their window ends.
@@ -53,7 +84,7 @@ export async function getData(db: Db): Promise<AppData> {
   const { _id, ...settings } = s ?? { _id: SETTINGS_ID, ...DEFAULT_SETTINGS };
   return {
     settings,
-    categories: categories.map((d) => fromDoc<Category>(d)),
+    categories: categories.map((d) => fromDoc<Category>(d)).sort((a, b) => categoryRank(a.id) - categoryRank(b.id)),
     expenses: expenses.map((d) => fromDoc<Expense>(d)),
     emis: emis.map((d) => fromDoc<Emi>(d)),
   };
