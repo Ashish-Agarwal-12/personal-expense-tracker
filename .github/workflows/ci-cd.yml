@@ -105,11 +105,15 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
         run: |
           for i in $(seq 1 10); do
-            if curl -fsS "$APP_URL/api/health" > /dev/null; then
+            status=$(curl -sS -o body.json -w '%{http_code}' "$APP_URL/api/health" || echo 000)
+            if [ "$status" = 200 ]; then
               echo "App is healthy at $APP_URL"
               exit 0
             fi
+            echo "Attempt $i: HTTP $status"
             sleep 6
           done
-          echo "::error::$APP_URL/api/health did not respond OK — check the Vercel function logs and environment variables."
+          # Show the server's own explanation (e.g. which setting is wrong) right in the Actions log.
+          problems=$(node -e "try{const b=require('./body.json');console.log((b.setupProblems||[b.error]).join(' | '))}catch{console.log('no details')}")
+          echo "::error::$APP_URL/api/health is not healthy (HTTP $status): $problems"
           exit 1

@@ -10,7 +10,7 @@
     "start": "node server/index.js",
     "dev": "node --env-file-if-exists=.env server/index.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
-    "check": "node --check server/index.js && node --check server/app.js && node --check server/auth.js && node --check server/validate.js && node --check server/db.js && node --check api/index.js && node --check public/js/app.js"
+    "check": "node --check server/index.js && node --check server/app.js && node --check server/auth.js && node --check server/validate.js && node --check server/db.js && node --check server/startup.js && node --check api/index.js && node --check public/js/app.js"
   },
   "dependencies": {
     "express": "^4.22.3",
