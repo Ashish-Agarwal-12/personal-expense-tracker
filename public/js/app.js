@@ -52,7 +52,11 @@
     }
     if (res.status === 204) return null;
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status})`);
+    if (!res.ok) {
+      const err = new ApiError(res.status, data.error || `Request failed (${res.status})`);
+      if (Array.isArray(data.setupProblems)) err.setupProblems = data.setupProblems;
+      throw err;
+    }
     return data;
   }
 
@@ -908,7 +912,12 @@
     } catch (e) {
       if (e.status !== 401) {
         document.body.classList.remove('loading');
-        document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Can't reach the server</h1><p class="muted">${esc(e.message)}</p><button class="btn primary" id="retryBtn">Try again</button></div></div>`;
+        const setup = e.setupProblems && e.setupProblems.length;
+        const detail = setup
+          ? `<p class="muted small">The website is online, but the server isn't set up correctly yet. Fix this, then redeploy:</p>
+             <ul class="setup-list">${e.setupProblems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>`
+          : `<p class="muted">${esc(e.message)}</p>`;
+        document.body.innerHTML = `<div class="login"><div class="card login-card${setup ? ' setup-card' : ''}"><h1>${setup ? '⚙️ Server setup problem' : "Can't reach the server"}</h1>${detail}<button class="btn primary" id="retryBtn">Try again</button></div></div>`;
         document.getElementById('retryBtn').addEventListener('click', () => location.reload());
       }
     }
