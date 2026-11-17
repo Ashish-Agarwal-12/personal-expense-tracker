@@ -38,11 +38,13 @@ async function ensureInitialized(db) {
 
 async function ensureIndexes(db) {
   await db.collection('expenses').createIndex({ date: -1 });
+  // Failed-login counters delete themselves when their window ends.
+  await db.collection('login_attempts').createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 });
 }
 
-function createApp({ db, password, secret, secureCookies = false, publicDir = path.join(__dirname, '..', 'public') }) {
+function createApp({ db, password, secret, secureCookies = false, serveStatic = true, publicDir = path.join(__dirname, '..', 'public') }) {
   const auth = createAuth({ password, secret, secureCookies });
-  const limiter = createLoginLimiter();
+  const limiter = createLoginLimiter(db.collection('login_attempts'));
   const col = {
     settings: db.collection('settings'),
     categories: db.collection('categories'),
@@ -66,7 +68,7 @@ function createApp({ db, password, secret, secureCookies = false, publicDir = pa
     next();
   });
 
-  app.use(express.json({ limit: '5mb' }));
+  app.use(express.json({ limit: '4mb' })); // Vercel Functions accept request bodies up to 4.5 MB
 
   // Wraps async route handlers so thrown errors reach the error middleware.
   const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -79,17 +81,17 @@ function createApp({ db, password, secret, secureCookies = false, publicDir = pa
 
   app.get('/api/session', (req, res) => res.json({ authenticated: auth.isAuthed(req) }));
 
-  app.post('/api/login', (req, res) => {
-    const ip = req.ip;
-    if (limiter.blocked(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  app.post('/api/login', h(async (req, res) => {
+    const ip = req.ip || 'unknown';
+    if (await limiter.blocked(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
     if (!auth.passwordMatches(req.body && req.body.password)) {
-      limiter.fail(ip);
+      await limiter.fail(ip);
       return res.status(401).json({ error: 'Wrong password' });
     }
-    limiter.reset(ip);
+    await limiter.reset(ip);
     auth.setSession(res);
     res.json({ ok: true });
-  });
+  }));
 
   app.post('/api/logout', (req, res) => {
     auth.clearSession(res);
@@ -200,8 +202,8 @@ function createApp({ db, password, secret, secureCookies = false, publicDir = pa
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
-  /* ---------- website ---------- */
-  app.use(express.static(publicDir, { index: 'index.html', maxAge: 0 }));
+  /* ---------- website (local dev only; on Vercel, public/ is served as static files) ---------- */
+  if (serveStatic) app.use(express.static(publicDir, { index: 'index.html', maxAge: 0 }));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

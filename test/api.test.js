@@ -68,6 +68,16 @@ test('wrong password is rejected, right password sets a secure-ish cookie', asyn
   assert.match(cookie, /SameSite=Strict/);
 });
 
+test('login is blocked after 10 wrong passwords (counter stored in MongoDB)', async () => {
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await call('POST', '/api/login', { body: { password: 'guess' + i } })).status, 401);
+  }
+  assert.equal((await call('POST', '/api/login', { body: { password: PASSWORD } })).status, 429, 'even the right password is blocked');
+  const counter = await db.collection('login_attempts').findOne({});
+  assert.equal(counter.count, 10);
+  assert.ok(counter.expireAt > new Date(), 'counter expires by itself');
+});
+
 test('forged session cookie is rejected', async () => {
   const cookie = 'sid=99999999999999.forgedsignature';
   assert.equal((await call('GET', '/api/data', { cookie })).status, 401);

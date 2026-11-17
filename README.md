@@ -2,12 +2,12 @@
 
 A personal app to stop overspending and get out of debt. It tracks daily expenses, puts every EMI in one place, and **warns you before you spend money you don't have**.
 
-Your data is stored in **MongoDB Atlas**, the website runs on **Render**, and it is protected by a password, so you can open it from your phone or any computer.
+Your data is stored in **MongoDB Atlas**, the website runs on **Vercel**, and it is protected by a password, so you can open it from your phone or any computer.
 
 ```
- git push ──► GitHub Actions ──► tests pass? ──► Render deploys ──► https://your-app.onrender.com
-                                                                           │
-                                                                     MongoDB Atlas
+ git push ──► GitHub Actions ──► tests pass? ──► Vercel deploy ──► https://your-app.vercel.app
+                                                  (PR → preview,          │
+                                                   main → production)  MongoDB Atlas
 ```
 
 ---
@@ -16,47 +16,56 @@ Your data is stored in **MongoDB Atlas**, the website runs on **Render**, and it
 
 ### 1. MongoDB Atlas — the database
 
-1. Sign up at <https://www.mongodb.com/cloud/atlas/register> and create a **free M0 cluster**. Pick a region close to you (e.g. Mumbai).
-2. **Database Access** → *Add New Database User* → choose a username and a strong password. Role: *Read and write to any database*.
-3. **Network Access** → *Add IP Address* → `0.0.0.0/0` (allow from anywhere).
-   Render's free plan has no fixed IP address, so this is required. The database is still protected by the user/password from step 2.
-4. **Database** → *Connect* → *Drivers* → copy the connection string. It looks like:
-   ```
-   mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-   ```
-   Replace `<password>` with the password from step 2.
+1. Sign up at <https://www.mongodb.com/cloud/atlas/register> and create a **free M0 cluster** (region close to you, e.g. Mumbai).
+2. **Database Access** → *Add New Database User* → username + strong password, role *Read and write to any database*.
+3. **Network Access** → *Add IP Address* → `0.0.0.0/0`.
+   Vercel Functions don't have fixed IP addresses, so this is required. The database is still protected by the user/password.
+4. **Connect** → *Drivers* → copy the connection string (`mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/`).
 
-### 2. Render — the website
+### 2. Vercel — the website
 
-1. Sign up at <https://render.com> with your GitHub account.
-2. **New → Blueprint** → choose the `personal-expense-tracker` repo. Render reads `render.yaml` and asks for:
-   - `MONGODB_URI` → the connection string from Atlas
-   - `APP_PASSWORD` → the password **you** will use to log in to the tracker (8+ characters, don't reuse another password)
-3. Click **Apply**. The first deploy takes a few minutes; you'll get a URL like `https://debt-free-tracker.onrender.com`.
-4. Open the service → **Settings → Deploy Hook** → copy the URL. (Keep it secret — anyone with it can trigger a deploy.)
+1. Sign up / log in at <https://vercel.com> with **GitHub** (the same Vercel account you use for v0).
+2. **Add New… → Project** → import `personal-expense-tracker`. Framework preset: **Other** (the rest comes from `vercel.json`).
+3. Open **Environment Variables** and add:
+
+   | Name | Value | Environments |
+   |---|---|---|
+   | `MONGODB_URI` | your Atlas connection string | Production, Preview |
+   | `MONGODB_DB` | `personal-expense-tracker` | Production |
+   | `MONGODB_DB` | `personal-expense-tracker-preview` | Preview — so test deployments never touch your real data |
+   | `APP_PASSWORD` | the password **you** will log in with (8+ characters, not reused) | Production, Preview |
+   | `SESSION_SECRET` | a long random string — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` | Production, Preview |
+
+4. Click **Deploy**. Your site will be at `https://<project-name>.vercel.app`.
+
+> `vercel.json` turns off Vercel's own deploy-on-every-push, so that **GitHub Actions** decides what goes live (only code that passes the tests).
 
 ### 3. GitHub — connect CI/CD
 
-In the GitHub repo: **Settings → Secrets and variables → Actions**
+Collect three values:
+
+- **VERCEL_TOKEN** → <https://vercel.com/account/tokens> → *Create Token* (scope: your account).
+- **VERCEL_ORG_ID** → Vercel → *Account Settings → General* → **Vercel ID** (if the project is under a team, use the team's *Team ID* instead).
+- **VERCEL_PROJECT_ID** → your project → *Settings → General* → **Project ID**.
+
+Then in the GitHub repo: **Settings → Secrets and variables → Actions**
 
 | Tab | Name | Value |
 |---|---|---|
-| Secrets | `RENDER_DEPLOY_HOOK_URL` | the Deploy Hook URL from Render |
-| Variables | `APP_URL` | your Render URL, e.g. `https://debt-free-tracker.onrender.com` |
+| Secrets | `VERCEL_TOKEN` | the token |
+| Secrets | `VERCEL_ORG_ID` | the Vercel / Team ID |
+| Secrets | `VERCEL_PROJECT_ID` | the Project ID |
+| Variables | `APP_URL` | `https://<project-name>.vercel.app` (used for the after-deploy health check) |
 
-That's it. From now on:
+From now on:
 
-- **Every push / pull request** → GitHub Actions runs the tests.
-- **Push to `main` with passing tests** → Actions triggers a Render deploy and waits until the new version is healthy.
-- A failing test **blocks** the deploy, so a broken version never goes live.
-
-You can watch runs in the repo's **Actions** tab.
-
-> **Free plan note:** Render's free service sleeps after 15 minutes of no use. The first visit after that takes ~30–60 seconds to wake up; after that it's fast.
+- **Pull request** → tests run → if they pass, a **preview** deployment is made (link in the Actions run summary).
+- **Push / merge to `main`** → tests run → if they pass, **production** is deployed and health-checked.
+- A failing test **blocks** the deploy.
 
 ### Moving data from the old offline version
 
-If you used the earlier browser-only version, open the new website **in the same browser** and log in. It will offer to upload your saved data to the database.
+If you used the earlier browser-only version, open the new site **in the same browser** and log in. It will offer to upload that data to the database.
 
 ---
 
@@ -67,9 +76,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. Without a `.env` file it uses a **temporary in-memory database** (data is lost when you stop it) and the password `dev-password`.
-
-To use your real Atlas database locally, copy `.env.example` to `.env` and fill it in.
+Open <http://localhost:5173>. Settings come from `.env` (copy `.env.example`). Without `MONGODB_URI` it uses a **temporary in-memory database**; without `APP_PASSWORD` the password is `dev-password`.
 
 ```bash
 npm test         # API tests (uses a throwaway MongoDB)
@@ -98,20 +105,22 @@ Safe to spend today    = (What's left this month) ÷ (Days left in month)
 
 ## Security
 
-- Every page of data needs a login; the session cookie is `HttpOnly`, `Secure` and `SameSite=Strict`, valid for 30 days.
-- Changing `APP_PASSWORD` on Render logs out every device.
-- 10 wrong passwords from one IP blocks login for 15 minutes.
+- Every piece of data needs a login; the session cookie is `HttpOnly`, `Secure` and `SameSite=Strict`, valid for 30 days.
+- Changing `APP_PASSWORD` in Vercel (then redeploying) logs out every device.
+- 10 wrong passwords from one IP blocks login for 15 minutes (tracked in MongoDB, so it holds across all serverless instances).
 - All input is validated on the server before it reaches MongoDB.
 
 ## Project structure
 
 ```
-public/                 the website (HTML, CSS, JS)
+public/                 the website (HTML, CSS, JS) — served by Vercel as static files
+api/index.js            Vercel Function: handles every /api/* request
 server/app.js           API routes
-server/auth.js          password login + session cookie
+server/auth.js          password login, session cookie, login rate limit
+server/db.js            shared MongoDB connection
 server/validate.js      input validation
-server/index.js         starts the server, connects to MongoDB
-test/api.test.js        API tests
+server/index.js         local development server (npm run dev)
+test/                   API + Vercel function tests
 .github/workflows/      CI/CD pipeline
-render.yaml             Render hosting config
+vercel.json             Vercel routing, headers, deploy settings
 ```

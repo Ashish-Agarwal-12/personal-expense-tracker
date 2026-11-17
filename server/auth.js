@@ -70,24 +70,26 @@ function createAuth({ password, secret, secureCookies }) {
   return { passwordMatches, setSession, clearSession, isAuthed, requireAuth };
 }
 
-/** Simple in-memory limiter for login attempts: `max` failures per IP per window. */
-function createLoginLimiter({ max = 10, windowMs = 15 * 60 * 1000 } = {}) {
-  const hits = new Map();
+/**
+ * Login attempt limiter: `max` failures per IP per window.
+ * Stored in MongoDB (collection `login_attempts`, auto-expired by a TTL index) so the limit
+ * holds across all serverless instances, not just the one that saw the attempts.
+ */
+function createLoginLimiter(collection, { max = 10, windowMs = 15 * 60 * 1000 } = {}) {
   return {
-    blocked(ip) {
-      const h = hits.get(ip);
-      if (!h || h.reset < Date.now()) return false;
-      return h.count >= max;
+    async blocked(ip) {
+      const h = await collection.findOne({ _id: ip, expireAt: { $gt: new Date() } });
+      return !!h && h.count >= max;
     },
-    fail(ip) {
-      const now = Date.now();
-      const h = hits.get(ip);
-      if (!h || h.reset < now) hits.set(ip, { count: 1, reset: now + windowMs });
-      else h.count++;
-      if (hits.size > 10000) for (const [k, v] of hits) if (v.reset < now) hits.delete(k);
+    async fail(ip) {
+      const now = new Date();
+      const r = await collection.updateOne({ _id: ip, expireAt: { $gt: now } }, { $inc: { count: 1 } });
+      if (!r.matchedCount) {
+        await collection.replaceOne({ _id: ip }, { count: 1, expireAt: new Date(now.getTime() + windowMs) }, { upsert: true });
+      }
     },
-    reset(ip) {
-      hits.delete(ip);
+    async reset(ip) {
+      await collection.deleteOne({ _id: ip });
     },
   };
 }

@@ -1,13 +1,15 @@
 name: CI/CD
 
 # Every push and pull request runs the tests.
-# Only a push to main that passes the tests is deployed to Render.
+# - Pull request that passes → Vercel *preview* deployment (link posted in the run summary).
+# - Push to main that passes → Vercel *production* deployment.
+# Vercel's own Git auto-deploy is turned off in vercel.json, so nothing goes live without passing tests.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch: # lets you re-run a deploy by hand from the Actions tab
+  workflow_dispatch: # re-run a production deploy by hand from the Actions tab
 
 permissions:
   contents: read
@@ -39,37 +41,75 @@ jobs:
       - run: npm test
 
   deploy:
-    name: Deploy to Render
+    name: Deploy to Vercel
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # PRs from forks don't get secrets, so only deploy PRs from this repo.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ vars.APP_URL }}
+    environment: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_ENV: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
+      MONGOMS_DISABLE_POSTINSTALL: '1' # the test-only MongoDB binary isn't needed for deploys
     steps:
-      - name: Trigger Render deploy
-        env:
-          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      - name: Check Vercel secrets
+        id: secrets
         run: |
-          if [ -z "$DEPLOY_HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_URL secret is not set — skipping deploy. See README → Deploy."
-            exit 0
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::warning::VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID secrets are not set — skipping deploy. See README → Deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
-          curl -fsS -X POST "$DEPLOY_HOOK" > /dev/null
-          echo "Deploy triggered on Render."
 
-      - name: Wait for the new version to be healthy
-        if: vars.APP_URL != ''
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Vercel CLI
+        if: steps.secrets.outputs.ready == 'true'
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project settings
+        if: steps.secrets.outputs.ready == 'true'
+        run: vercel pull --yes --environment="$VERCEL_ENV" --token="$VERCEL_TOKEN"
+
+      - name: Build
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          if [ "$VERCEL_ENV" = production ]; then vercel build --prod --token="$VERCEL_TOKEN"; else vercel build --token="$VERCEL_TOKEN"; fi
+
+      - name: Deploy
+        if: steps.secrets.outputs.ready == 'true'
+        id: deploy
+        run: |
+          if [ "$VERCEL_ENV" = production ]; then
+            url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          else
+            url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### 🚀 Deployed ($VERCEL_ENV): $url" >> "$GITHUB_STEP_SUMMARY"
+
+      # Uses your public production domain; Vercel's per-deployment URLs sit behind Deployment Protection.
+      - name: Health check
+        if: steps.secrets.outputs.ready == 'true' && env.VERCEL_ENV == 'production' && vars.APP_URL != ''
         env:
           APP_URL: ${{ vars.APP_URL }}
         run: |
-          # Render takes a few minutes to build; poll the health endpoint for up to ~10 minutes.
-          for i in $(seq 1 40); do
+          for i in $(seq 1 10); do
             if curl -fsS "$APP_URL/api/health" > /dev/null; then
               echo "App is healthy at $APP_URL"
               exit 0
             fi
-            sleep 15
+            sleep 6
           done
-          echo "::error::App did not become healthy in time — check the Render logs."
+          echo "::error::$APP_URL/api/health did not respond OK — check the Vercel function logs and environment variables."
           exit 1
