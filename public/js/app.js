@@ -1,19 +1,10 @@
-/* Debt-Free Tracker — all data stays in this browser (localStorage). */
+/* Debt-Free Tracker — data is stored in MongoDB through the server API (see server/app.js). */
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'debtFreeTracker.v1';
-
-  const DEFAULT_CATEGORIES = [
-    { id: 'food', name: 'Food & Groceries', icon: '🛒', limit: 0 },
-    { id: 'eating', name: 'Eating out / Swiggy / Zomato', icon: '🍔', limit: 0 },
-    { id: 'transport', name: 'Transport & Fuel', icon: '⛽', limit: 0 },
-    { id: 'shopping', name: 'Shopping', icon: '🛍️', limit: 0 },
-    { id: 'entertainment', name: 'Entertainment', icon: '🎬', limit: 0 },
-    { id: 'health', name: 'Health & Medicine', icon: '💊', limit: 0 },
-    { id: 'family', name: 'Family & Gifts', icon: '🎁', limit: 0 },
-    { id: 'other', name: 'Other', icon: '📦', limit: 0 },
-  ];
+  // Old versions kept everything in localStorage under this key; we offer to upload it once.
+  const LEGACY_KEY = 'debtFreeTracker.v1';
+  const TAB_KEY = 'debtFreeTracker.tab';
 
   const METHOD_LABEL = { upi: 'UPI', cash: 'Cash', debit: 'Debit card', credit: 'Credit card' };
   const EMI_KIND = {
@@ -29,40 +20,59 @@
   /* ------------------------------------------------------------------ *
    * State
    * ------------------------------------------------------------------ */
-  function defaultState() {
-    return {
-      settings: { income: 0, fixedBills: 0, savingsGoal: 0, ccLimit: 0 },
-      categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
-      expenses: [],
-      emis: [],
-    };
+  let state = {
+    settings: { income: 0, fixedBills: 0, savingsGoal: 0, ccLimit: 0 },
+    categories: [],
+    expenses: [],
+    emis: [],
+  };
+
+  /* ------------------------------------------------------------------ *
+   * Server API
+   * ------------------------------------------------------------------ */
+  class ApiError extends Error {
+    constructor(status, message) { super(message); this.status = status; }
   }
 
-  function load() {
+  async function api(method, path, body) {
+    let res;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultState();
-      const data = JSON.parse(raw);
-      const base = defaultState();
-      return {
-        settings: { ...base.settings, ...(data.settings || {}) },
-        categories: Array.isArray(data.categories) && data.categories.length ? data.categories : base.categories,
-        expenses: Array.isArray(data.expenses) ? data.expenses : [],
-        emis: Array.isArray(data.emis) ? data.emis : [],
-      };
+      res = await fetch('/api' + path, {
+        method,
+        credentials: 'same-origin',
+        headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
     } catch (e) {
-      console.error('Could not load saved data', e);
-      return defaultState();
+      throw new ApiError(0, 'No internet connection — change not saved.');
     }
+    if (res.status === 401 && path !== '/login') {
+      showLogin();
+      throw new ApiError(401, 'Please log in again.');
+    }
+    if (res.status === 204) return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status})`);
+    return data;
   }
 
-  let state = load();
+  async function loadData() {
+    state = await api('GET', '/data');
+    render();
+  }
 
-  function save() {
+  /**
+   * Apply a change locally right away (so the app feels instant), then save it to the server.
+   * If the server rejects it, show why and reload the true data from the server.
+   */
+  async function sync(localChange, request) {
+    if (localChange) { localChange(); render(); }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      return await request();
     } catch (e) {
-      toast('Could not save — browser storage is blocked or full.');
+      toast(e.message);
+      if (e.status !== 401) loadData().catch(() => {});
+      throw e;
     }
   }
 
@@ -561,9 +571,12 @@
         </div>`);
       if (!ok) { toast('Good call. Money saved!'); return false; }
     }
-    state.expenses.push({ ...exp, id: uid(), createdAt: Date.now() });
-    save();
-    render();
+    const item = { ...exp, id: uid(), createdAt: Date.now() };
+    try {
+      await sync(() => state.expenses.push(item), () => api('POST', '/expenses', item));
+    } catch (e) {
+      return false;
+    }
     toast(`Added ${money(exp.amount)}`);
     return true;
   }
@@ -648,30 +661,40 @@
         rate: num(f.rate.value),
       };
       if (data.paidMonths > data.totalMonths) return toast('Paid EMIs cannot be more than total tenure');
-      if (isNew) state.emis.push({ ...data, id: uid(), payments: [] });
-      else Object.assign(state.emis.find((x) => x.id === e.id), data);
-      save();
+      const item = isNew ? { ...data, id: uid(), payments: [] } : { ...e, ...data };
       closeModal(true);
-      render();
-      toast(isNew ? 'EMI added' : 'EMI updated');
+      sync(
+        () => {
+          if (isNew) state.emis.push(item);
+          else state.emis = state.emis.map((x) => (x.id === item.id ? item : x));
+        },
+        () => (isNew ? api('POST', '/emis', item) : api('PUT', `/emis/${item.id}`, item)),
+      ).then(() => toast(isNew ? 'EMI added' : 'EMI updated'), () => {});
     });
   }
 
-  function markPaid(id, paid) {
+  async function markPaid(id, paid) {
     const e = state.emis.find((x) => x.id === id);
     if (!e) return;
     const m = thisMonth();
-    e.payments = e.payments || [];
-    if (paid && !e.payments.includes(m)) {
-      e.payments.push(m);
-      e.paidMonths = Math.min(num(e.totalMonths), num(e.paidMonths) + 1);
-      toast(emiRemainingMonths(e) === 0 ? `🎉 ${e.name} is fully paid off!` : `${e.name} marked paid`);
-    } else if (!paid && e.payments.includes(m)) {
-      e.payments = e.payments.filter((x) => x !== m);
-      e.paidMonths = Math.max(0, num(e.paidMonths) - 1);
-    }
-    save();
-    render();
+    try {
+      const updated = await sync(
+        () => {
+          e.payments = e.payments || [];
+          if (paid && !e.payments.includes(m)) {
+            e.payments.push(m);
+            e.paidMonths = Math.min(num(e.totalMonths), num(e.paidMonths) + 1);
+          } else if (!paid && e.payments.includes(m)) {
+            e.payments = e.payments.filter((x) => x !== m);
+            e.paidMonths = Math.max(0, num(e.paidMonths) - 1);
+          }
+        },
+        () => api('POST', `/emis/${id}/pay`, { month: m, paid }),
+      );
+      state.emis = state.emis.map((x) => (x.id === id ? updated : x));
+      render();
+      if (paid) toast(emiRemainingMonths(updated) === 0 ? `🎉 ${updated.name} is fully paid off!` : `${updated.name} marked paid`);
+    } catch (err) { /* already reported */ }
   }
 
   function categoryForm(c) {
@@ -695,16 +718,23 @@
         toast('This category has expenses — it can’t be deleted. Set its limit instead.');
         return;
       }
-      state.categories = state.categories.filter((x) => x.id !== c.id);
-      save(); closeModal(true); render();
+      closeModal(true);
+      sync(() => { state.categories = state.categories.filter((x) => x.id !== c.id); },
+        () => api('DELETE', `/categories/${c.id}`)).catch(() => {});
     });
     $('#catForm').addEventListener('submit', (ev) => {
       ev.preventDefault();
       const f = ev.currentTarget;
       const data = { name: f.name.value.trim(), icon: f.icon.value.trim() || '📦', limit: num(f.limit.value) };
-      if (isNew) state.categories.push({ ...data, id: uid() });
-      else Object.assign(state.categories.find((x) => x.id === c.id), data);
-      save(); closeModal(true); render();
+      const item = isNew ? { ...data, id: uid() } : { ...c, ...data };
+      closeModal(true);
+      sync(
+        () => {
+          if (isNew) state.categories.push(item);
+          else state.categories = state.categories.map((x) => (x.id === item.id ? item : x));
+        },
+        () => (isNew ? api('POST', '/categories', item) : api('PUT', `/categories/${item.id}`, item)),
+      ).catch(() => {});
     });
   }
 
@@ -714,7 +744,7 @@
   function showView(name) {
     $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
-    try { localStorage.setItem(STORAGE_KEY + '.tab', name); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(TAB_KEY, name); } catch (e) { /* ignore */ }
     window.scrollTo(0, 0);
   }
 
@@ -733,10 +763,14 @@
       const emi = state.emis.find((x) => x.id === d.delEmi);
       const ok = await confirmModal(`<h3>Delete “${esc(emi.name)}”?</h3><p class="muted">This removes the EMI and its payment history.</p>
         <div class="actions"><button class="btn" data-no>Cancel</button><button class="btn solid-danger" data-yes>Delete</button></div>`);
-      if (ok) { state.emis = state.emis.filter((x) => x.id !== d.delEmi); save(); render(); }
+      if (ok) {
+        sync(() => { state.emis = state.emis.filter((x) => x.id !== d.delEmi); },
+          () => api('DELETE', `/emis/${d.delEmi}`)).catch(() => {});
+      }
     } else if (d.delExp) {
-      state.expenses = state.expenses.filter((x) => x.id !== d.delExp);
-      save(); render(); toast('Expense deleted');
+      const delId = d.delExp;
+      sync(() => { state.expenses = state.expenses.filter((x) => x.id !== delId); },
+        () => api('DELETE', `/expenses/${delId}`)).then(() => toast('Expense deleted'), () => {});
     }
   });
 
@@ -750,13 +784,13 @@
   $('#settingsForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const f = e.currentTarget;
-    state.settings = {
+    const s = {
       income: num(f.income.value),
       fixedBills: num(f.fixedBills.value),
       savingsGoal: num(f.savingsGoal.value),
       ccLimit: num(f.ccLimit.value),
     };
-    save(); render(); toast('Budget saved');
+    sync(() => { state.settings = s; }, () => api('PUT', '/settings', s)).then(() => toast('Budget saved'), () => {});
   });
 
   $('#exportBtn').addEventListener('click', () => {
@@ -777,34 +811,119 @@
       const ok = await confirmModal(`<h3>Restore backup?</h3><p class="muted">This replaces everything currently in the app with the backup (${data.expenses.length} expenses, ${data.emis.length} EMIs).</p>
         <div class="actions"><button class="btn" data-no>Cancel</button><button class="btn primary" data-yes>Restore</button></div>`);
       if (ok) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        state = load();
-        render();
+        await api('POST', '/import', data);
+        await loadData();
         toast('Backup restored');
       }
     } catch (err) {
-      toast('That file is not a valid backup');
+      toast(err instanceof ApiError ? err.message : 'That file is not a valid backup');
     }
     e.target.value = '';
   });
 
   $('#resetBtn').addEventListener('click', async () => {
-    const ok = await confirmModal(`<h3>Erase all data?</h3><p class="muted">All expenses, EMIs and settings will be deleted from this browser. Download a backup first if you might need it. This cannot be undone.</p>
+    const ok = await confirmModal(`<h3>Erase all data?</h3><p class="muted">All expenses, EMIs and settings will be permanently deleted from your database, on every device. Download a backup first if you might need it. This cannot be undone.</p>
       <div class="actions"><button class="btn" data-no>Cancel</button><button class="btn solid-danger" data-yes>Erase everything</button></div>`);
-    if (ok) { state = defaultState(); save(); render(); toast('All data erased'); }
+    if (!ok) return;
+    try {
+      await api('DELETE', '/data');
+      await loadData();
+      toast('All data erased');
+    } catch (err) { toast(err.message); }
+  });
+
+  $('#logoutBtn').addEventListener('click', async () => {
+    try { await api('POST', '/logout'); } catch (e) { /* ignore */ }
+    showLogin();
+  });
+
+  /* ------------------------------------------------------------------ *
+   * Login
+   * ------------------------------------------------------------------ */
+  function showLogin() {
+    closeModal(false);
+    document.body.classList.remove('loading');
+    document.body.classList.add('locked');
+    $('#loginScreen').hidden = false;
+    $('#loginForm').password.value = '';
+    setTimeout(() => $('#loginForm').password.focus(), 30);
+  }
+
+  $('#loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    const btn = f.querySelector('button');
+    $('#loginError').textContent = '';
+    btn.disabled = true;
+    try {
+      await api('POST', '/login', { password: f.password.value });
+      await openApp();
+    } catch (err) {
+      $('#loginError').textContent = err.message;
+      f.password.value = '';
+      f.password.focus();
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   /* ------------------------------------------------------------------ *
    * Boot
    * ------------------------------------------------------------------ */
-  $('#expenseForm [name=date]').value = todayStr();
-  render();
-  let startTab = 'dashboard';
-  try { startTab = localStorage.getItem(STORAGE_KEY + '.tab') || 'dashboard'; } catch (e) { /* ignore */ }
-  if (!state.settings.income) startTab = 'dashboard';
-  showView(startTab);
+  /** Data saved by the old browser-only version: offer to upload it once if the database is still empty. */
+  async function offerLegacyUpload() {
+    let legacy;
+    try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); } catch (e) { return; }
+    if (!legacy || (!legacy.expenses?.length && !legacy.emis?.length)) return;
+    if (state.expenses.length || state.emis.length) return;
+    const ok = await confirmModal(`<h3>Move your saved data online?</h3>
+      <p class="muted">This browser has data from the offline version (${legacy.expenses?.length || 0} expenses, ${legacy.emis?.length || 0} EMIs). Upload it to your database so you can see it from any device?</p>
+      <div class="actions"><button class="btn" data-no>Not now</button><button class="btn primary" data-yes>Upload</button></div>`);
+    if (!ok) return;
+    try {
+      await api('POST', '/import', legacy);
+      localStorage.removeItem(LEGACY_KEY);
+      await loadData();
+      toast('Your data is now saved online');
+    } catch (err) { toast(err.message); }
+  }
+
+  async function openApp() {
+    await loadData();
+    $('#loginScreen').hidden = true;
+    document.body.classList.remove('loading', 'locked');
+    let startTab = 'dashboard';
+    try { startTab = localStorage.getItem(TAB_KEY) || 'dashboard'; } catch (e) { /* ignore */ }
+    if (!state.settings.income) startTab = 'dashboard';
+    showView(startTab);
+    offerLegacyUpload();
+  }
+
+  async function boot() {
+    $('#expenseForm [name=date]').value = todayStr();
+    try {
+      const { authenticated } = await api('GET', '/session');
+      if (authenticated) await openApp();
+      else showLogin();
+    } catch (e) {
+      if (e.status !== 401) {
+        document.body.classList.remove('loading');
+        document.body.innerHTML = `<div class="login"><div class="card login-card"><h1>Can't reach the server</h1><p class="muted">${esc(e.message)}</p><button class="btn primary" id="retryBtn">Try again</button></div></div>`;
+        document.getElementById('retryBtn').addEventListener('click', () => location.reload());
+      }
+    }
+  }
+
+  boot();
 
   // Re-render when the date rolls over (app left open overnight).
   let lastDay = todayStr();
   setInterval(() => { if (todayStr() !== lastDay) { lastDay = todayStr(); render(); } }, 60000);
+
+  // Coming back to the tab (e.g. you added something on your phone): fetch the latest data.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !document.body.classList.contains('locked') && !document.body.classList.contains('loading') && $('#modal').hidden) {
+      loadData().catch(() => {});
+    }
+  });
 })();

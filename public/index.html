@@ -6,7 +6,20 @@
   <title>Debt-Free Tracker</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
-<body>
+<body class="loading">
+  <section id="loginScreen" class="login" hidden>
+    <form id="loginForm" class="card login-card">
+      <span class="logo">₹</span>
+      <h1>Debt-Free Tracker</h1>
+      <p class="muted small">Enter your password to open your tracker.</p>
+      <label>Password
+        <input type="password" name="password" required autocomplete="current-password" />
+      </label>
+      <p class="danger-text small" id="loginError" role="alert"></p>
+      <button class="btn primary" type="submit">Log in</button>
+    </form>
+  </section>
+
   <header class="topbar">
     <div class="brand">
       <span class="logo">₹</span>
@@ -153,14 +166,15 @@
       </div>
 
       <div class="card">
-        <h2>Backup</h2>
-        <p class="muted small">All data is saved only in this browser on this device. Download a backup regularly.</p>
+        <h2>Backup &amp; account</h2>
+        <p class="muted small">Your data is saved in your MongoDB database, so it's the same on every device you log in from. A backup file is still a good idea once a month.</p>
         <div class="row">
           <button class="btn" id="exportBtn">Download backup</button>
           <label class="btn file-btn">Restore backup
             <input type="file" id="importInput" accept="application/json" hidden />
           </label>
           <button class="btn danger" id="resetBtn">Erase all data</button>
+          <button class="btn" id="logoutBtn">Log out</button>
         </div>
       </div>
     </section>

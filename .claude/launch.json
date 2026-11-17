@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "tracker",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["serve.js"],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
       "port": 5173
     }
   ]
