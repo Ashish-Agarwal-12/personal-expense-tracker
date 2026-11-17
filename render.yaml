@@ -1,0 +1,25 @@
+# Render Blueprint — creates the web service. Deploys are triggered by GitHub Actions
+# (after tests pass), so Render's own auto-deploy is turned off.
+services:
+  - type: web
+    name: debt-free-tracker
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGODB_DB
+        value: expense_tracker
+      - key: MONGODB_URI
+        sync: false # you paste your Atlas connection string in the Render dashboard
+      - key: APP_PASSWORD
+        sync: false # the password you'll log in with
+      - key: SESSION_SECRET
+        generateValue: true

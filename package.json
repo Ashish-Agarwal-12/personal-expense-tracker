@@ -1,9 +1,22 @@
 {
   "name": "personal-expense-tracker",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Track daily expenses and EMIs, with spending limits and warnings to get out of debt.",
   "private": true,
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
-    "start": "node serve.js"
+    "start": "node server/index.js",
+    "dev": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "check": "node --check server/index.js && node --check server/app.js && node --check server/auth.js && node --check server/validate.js && node --check public/js/app.js"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "mongodb": "^6.22.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.4.3"
   }
 }
